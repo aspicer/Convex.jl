@@ -19,10 +19,10 @@ end
 
 # function solve!(problem::Problem, m::MathProgBase.AbstractMathProgModel=SCS.SCSMathProgModel())
 function solve!(problem::Problem, 
-                m::MathProgBase.AbstractMathProgModel=ECOS.ECOSMathProgModel(); 
+                m::MathProgBase.AbstractMathProgModel=default_model(); 
                 warmstart=true)
 
-  c, A, b, cones, var_to_ranges, vartypes = conic_problem(problem)
+  c, A, b, cones, var_to_ranges, vartypes, constr_to_ranges = conic_problem(problem)
   if problem.head == :maximize
     c = -c
   end
@@ -52,13 +52,19 @@ function solve!(problem::Problem,
   # optimize problem
   status = MathProgBase.optimize!(m)
 
+  # get the primal (and possibly dual) solution
   try
-    y, z = MathProgBase.getconicdual(m)
-    problem.solution = Solution(MathProgBase.getsolution(m), y, z, MathProgBase.status(m), MathProgBase.getobjval(m))
+    dual = MathProgBase.getconicdual(m)
+    problem.solution = Solution(MathProgBase.getsolution(m), dual, 
+                                MathProgBase.status(m), MathProgBase.getobjval(m))    
   catch
-    problem.solution = Solution(MathProgBase.getsolution(m), MathProgBase.status(m), MathProgBase.getobjval(m))
-    populate_variables!(problem, var_to_ranges)
+    problem.solution = Solution(MathProgBase.getsolution(m),
+                                MathProgBase.status(m), MathProgBase.getobjval(m))
   end
+
+  populate_variables!(problem, var_to_ranges)
+  populate_duals!(problem::Problem, constr_to_ranges)
+
   # minimize -> maximize
   if (problem.head == :maximize)
     problem.solution.optval = -problem.solution.optval
@@ -84,6 +90,20 @@ function populate_variables!(problem::Problem, var_to_ranges::Dict{Uint64, (Int6
     var.value = reshape(x[start_index:end_index], sz[1], sz[2])
     if sz == (1, 1)
       var.value = var.value[1]
+    end
+  end
+end
+
+function populate_duals!(problem::Problem, constr_to_ranges)
+  if length(problem.solution.dual) > 0
+    y = problem.solution.dual
+    for (id, (start_index, end_index)) in constr_to_ranges
+      constr = id_to_constr[id]
+      sz = constr.size
+      constr.dual_value = reshape(y[start_index:end_index], sz[1], sz[2])
+      if sz == (1, 1)
+        constr.dual_value = constr.dual_value[1]
+      end
     end
   end
 end
